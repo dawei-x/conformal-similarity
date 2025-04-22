@@ -5,6 +5,8 @@ import torch.nn.functional as F
 import torchvision.transforms.functional as TF
 import json
 from tqdm import tqdm
+from itertools import combinations
+from collections import deque
 
 def load_json_file(json_file):
     with open(json_file, 'r') as f:
@@ -110,3 +112,57 @@ def curate_proxy_images(instance_index, pred_set, proxy_lookup, label_map, image
         filename = f"{labelname}.jpg"
         img_path = os.path.join(target_dir, filename)
         img_pil.save(img_path)
+
+
+def build_graph(hierarchy):
+    graph = {}
+
+    def traverse(node, parent=None):
+        node_key = node.get("id", node["name"])  # Use 'id' if available; otherwise 'name'
+
+        if node_key not in graph:
+            graph[node_key] = []
+
+        if parent is not None:
+            graph[node_key].append(parent)
+            graph.setdefault(parent, []).append(node_key)
+
+        for child in node.get("children", []):
+            traverse(child, node_key)
+
+    traverse(hierarchy)
+    return graph
+
+def shortest_path(graph, start, end):
+    """Finds the shortest path between two nodes in an unweighted graph using BFS."""
+    if start == end:
+        return 0
+    
+    queue = deque([(start, 0)])
+    visited = set([start])
+    
+    while queue:
+        node, distance = queue.popleft()
+        for neighbor in graph.get(node, []):
+            if neighbor == end:
+                return distance + 1
+            if neighbor not in visited:
+                visited.add(neighbor)
+                queue.append((neighbor, distance + 1))
+    return float("inf")
+
+def pairwise_distances(hierarchy_json, prediction_set):
+    """Computes max, min, and average pairwise distances for a given prediction set."""
+    
+    graph = build_graph(hierarchy_json)
+    
+    if not all(label in graph for label in prediction_set):
+        raise ValueError("One or more labels in the prediction set are not found in the hierarchy.")
+    
+    distances = [shortest_path(graph, id1, id2) for id1, id2 in combinations(prediction_set, 2)]
+    
+    return {
+        "max_distance": max(distances) if distances else 0,
+        "min_distance": min(distances) if distances else 0,
+        "avg_distance": sum(distances) / len(distances) if distances else 0,
+    }
